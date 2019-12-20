@@ -1,0 +1,180 @@
+﻿<!-- configure.status 为设置日志输出级别，级别如下：OFF 、FATAL 、ERROR、WARN、INFO、DEBUG、TRACE 、ALL -->
+<!--log4j2支持自动重新配置,如果配置了monitorInterval，那么log4j2每隔一段时间就会检查一遍这个文件是否修改 -->
+<!--如果需要查看删除文件测试日志 将status设置为debug 目前不会删除日志文件因为所有testMode="true" -->
+
+<!--当前所有配置策略如下：-->
+        <!--1.log4j2本身日志级别为error 如有错误会在控制台输出-->
+        <!--2.日志总归档路径为项目路径下logs/之后按年月日级别进行日志归档-->
+        <!--3.控制台输出日志级别为info 如果需要打印debug级别日志请将ThresholdFilter中level级别改为debug即可-->
+        <!--4.info日志级别归档策略：-->
+        <!--临时系统日志文件保存在logs/system.log logs/business.log  当日志大小大于100MB或者日期不一致或者到达中午12点进行归档-->
+        <!--归档文件目录为 logs/$${date:yyyy-MM}/$${date:yyyy-MM-dd}/system/system-%d{yyyy-MM-dd}-%i.log.gz-->
+        <!--其中归档最多保存50个压缩文件-->
+        <!--日志定期删除策略： 如果修改日期大于180天 或者满足日志匹配规则前提下 保留最近50GB或者最近1000数目的文件数-->
+        <!--5.业务操作日志文件： 基本策略与上述类似-->
+        <!--6.连接超时日志文件： logs/failover.log 策略为不进行归档不设置文件最大值等操作-->
+        <!--7.kafka普通业务信息发送策略为 同步发送 topic为yi-test（暂时） 日志过滤级别为error 超时时间为10s 发送地址为 192.100.2.44:9092,192.100.2.45:9092,192.100.2.46:9092-->
+        <!--8.kafka超时策略Failover 重试时间为15s 超时丢失日志保存本地 临时文件保存在logs/failover.log 通过agent进行采集-->
+        <!--9.日志支持使用@Slfj进行日志打印 通过判断marker来决定日志输出格式 通过 类名决定使用那些输出源-->
+<configuration status="error" monitorInterval="10">
+    <properties>
+        <property name="LOG_HOME">/logs/dev</property>
+        <!--%highlight{%-5level}{FATAL=red, ERROR=red, WARN=yellow, INFO=cyan, DEBUG=cyan,TRACE=blue} 彩色日志参数可能在控制台没有输出  -Dlog4j.skipJansi=false 暂时不用-->
+        <property name="PATTERN_LAYOUT_CONSOLE">%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level  --- %msg %xEx%n</property>
+        <property name="PATTERN_LAYOUT_CONSOLE_ROOT">%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level  --- %c{1.}.%M(%F:%L) --- %msg %xEx%n</property>
+        <!--[%X{X-B3-TraceId},%X{X-B3-SpanId},%X{X-B3-ParentSpanId},%X{X-Span-Export}] 链路追踪相关参数-->
+        <property name="PATTERN_LAYOUT">%d{yyyy-MM-dd HH:mm:ss.SSS} [%t] %-5level  --- %msg %xEx%n</property>
+        <property name="BUSINESS_LEVEL">info</property>
+        <property name="SYSTEM_LEVEL">debug</property>
+    </properties>
+    <!--先定义所有的appender -->
+    <appenders>
+        <!--这个输出控制台的配置 -->
+        <Console name="Console" target="SYSTEM_OUT">
+            <!-- 设置日志过滤 当日志级别为debug 以上 -->
+            <ThresholdFilter level="${SYSTEM_LEVEL}" onMatch="ACCEPT" onMismatch="DENY"/>
+            <PatternLayout charset="utf-8">
+                <MarkerPatternSelector defaultPattern="${PATTERN_LAYOUT_CONSOLE_ROOT}">
+                    <PatternMatch key="UTIL" pattern="${PATTERN_LAYOUT_CONSOLE}"/>
+                </MarkerPatternSelector>
+            </PatternLayout>
+        </Console>
+        <!-- 配置error及fatal级别日志输出文件名字error.log  追加读写append="true" -->
+        <!--fileName 要写入的文件的名称。如果文件或其父目录不存在，它们都将被创建出来-->
+        <!--filePattern  压缩日志文件的文件名的模式。整数计数器（即%i）-->
+        <RollingFile name="RollingFileSystem" fileName="${LOG_HOME}/system.log"
+                     filePattern="${LOG_HOME}/$${date:yyyy-MM}/$${date:yyyy-MM-dd}/system/system-%d{yyyy-MM-dd}-%i.log.gz"
+                     bufferSize="4096" immediateFlush="true" bufferedIO="true" append="true">
+            <Filters>
+                <MarkerFilter marker="MESSAGE" onMatch="DENY" onMismatch="NEUTRAL"/>
+                <MarkerFilter marker="TRACE" onMatch="DENY" onMismatch="NEUTRAL"/>
+                <ThresholdFilter level="${SYSTEM_LEVEL}" onMatch="ACCEPT" onMismatch="DENY"/>
+            </Filters>
+            <PatternLayout charset="utf-8">
+                <MarkerPatternSelector defaultPattern="${PATTERN_LAYOUT_CONSOLE_ROOT}">
+                    <PatternMatch key="UTIL" pattern="${PATTERN_LAYOUT}"/>
+                </MarkerPatternSelector>
+            </PatternLayout>
+            <Policies>
+                <!--当日志大小达到10KB以及当前日期与日志的开始日期不匹配时滚动日志的策略-->
+                <CronTriggeringPolicy schedule="0 0 0/12 * * ?"/>
+                <TimeBasedTriggeringPolicy/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <!--一旦达到这个值，旧的档案将在随后的rollover中被删除。-->
+            <DefaultRolloverStrategy max="50">
+                <Delete basePath="${LOG_HOME}" testMode="false" maxDepth="5">
+                    <IfFileName glob="*/*/system/system*.log.gz">
+                        <IfLastModified age="180d">
+                            <IfAny>
+                                <IfAccumulatedFileSize exceeds="50GB"/>
+                                <IfAccumulatedFileCount exceeds="1000"/>
+                            </IfAny>
+                        </IfLastModified>
+                    </IfFileName>
+                </Delete>
+            </DefaultRolloverStrategy>
+        </RollingFile>
+        <!-- 配置error及fatal级别日志输出文件名字error.log  追加读写append="true" -->
+        <!--fileName 要写入的文件的名称。如果文件或其父目录不存在，它们都将被创建出来-->
+        <!--filePattern  压缩日志文件的文件名的模式。整数计数器（即%i）-->
+        <RollingFile name="RollingFileBusiness" fileName="${LOG_HOME}/business.log"
+                     filePattern="${LOG_HOME}/$${date:yyyy-MM}/$${date:yyyy-MM-dd}/business/business-%d{yyyy-MM-dd}-%i.log.gz"
+                     bufferSize="4096" immediateFlush="true" bufferedIO="true" append="true">
+            <Filters>
+                <ThresholdFilter level="${BUSINESS_LEVEL}" onMatch="NEUTRAL" onMismatch="DENY"/>
+                <MarkerFilter marker="MESSAGE" onMatch="ACCEPT" onMismatch="NEUTRAL"/>
+                <MarkerFilter marker="TRACE" onMatch="ACCEPT" onMismatch="DENY"/>
+            </Filters>
+            <PatternLayout charset="utf-8" pattern="${PATTERN_LAYOUT_CONSOLE}"/>
+            <Policies>
+                <!--当日志大小达到10nMB以及当前日期与日志的开始日期不匹配时滚动日志的策略-->
+                <CronTriggeringPolicy schedule="0 0 0/12 * * ?"/>
+                <TimeBasedTriggeringPolicy/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <!--一旦达到这个值，旧的档案将在随后的rollover中被删除。-->
+            <DefaultRolloverStrategy max="50">
+                <Delete basePath="${LOG_HOME}" testMode="false" maxDepth="5">
+                    <IfFileName glob="*/*/business/business*.log.gz">
+                        <IfLastModified age="180d">
+                            <IfAny>
+                                <IfAccumulatedFileSize exceeds="50GB"/>
+                                <IfAccumulatedFileCount exceeds="1000"/>
+                            </IfAny>
+                        </IfLastModified>
+                    </IfFileName>
+                </Delete>
+            </DefaultRolloverStrategy>
+        </RollingFile>
+        <!--设置输出kafka策略  可以指定topic key ,ignoreExceptions必须设置为false否则不会触发failover策略 执行类为:%C 执行行号为:%L 执行方法为:%M -->
+        <Kafka name="KafkaSync" topic="audit-dev" syncSend="true" ignoreExceptions="false">
+            <Filters>
+                <MarkerFilter marker="MESSAGE" onMatch="NEUTRAL" onMismatch="DENY"/>
+                <ThresholdFilter level="${BUSINESS_LEVEL}" onMatch="ACCEPT" onMismatch="DENY"/>
+            </Filters>
+            <PatternLayout charset="utf-8" pattern="${PATTERN_LAYOUT}"/>
+            <Property name="bootstrap.servers">192.100.3.73:9092,192.100.3.74:9092,192.100.3.75:9092</Property>
+            <Property name="timeout.ms">3000</Property>
+            <!--<Property name="max.block.ms">2000</Property>-->
+        </Kafka>
+        <Kafka name="KafkaTraceSync" topic="trace-dev" syncSend="true" ignoreExceptions="false">
+            <Filters>
+                <MarkerFilter marker="TRACE" onMatch="NEUTRAL" onMismatch="DENY"/>
+                <ThresholdFilter level="${BUSINESS_LEVEL}" onMatch="ACCEPT" onMismatch="DENY"/>
+            </Filters>
+            <PatternLayout charset="utf-8" pattern="${PATTERN_LAYOUT}"/>
+            <Property name="bootstrap.servers">192.100.3.73:9092,192.100.3.74:9092,192.100.3.75:9092</Property>
+            <Property name="timeout.ms">3000</Property>
+            <!--<Property name="max.block.ms">2000</Property>-->
+        </Kafka>
+        <!-- 配置failover日志输出文件名字failover.log  将kafka未发送日志进行保存 如果kafka可以重新连接则继续发送日志 期间日志需要从failover文件中手动发回kafka -->
+        <!--fileName 要写入的文件的名称。如果文件或其父目录不存在，它们都将被创建出来-->
+        <!--filePattern  压缩日志文件的文件名的模式。整数计数器（即%i）-->
+        <File name="failoverKafkaLog" fileName="${LOG_HOME}/failover.log" ignoreExceptions="false" append="true">
+            <Filters>
+                <MarkerFilter marker="MESSAGE" onMatch="ACCEPT" onMismatch="NEUTRAL"/>
+                <MarkerFilter marker="TRACE" onMatch="ACCEPT" onMismatch="DENY"/>
+            </Filters>
+            <PatternLayout charset="utf-8" pattern="${PATTERN_LAYOUT}"/>
+        </File>
+        <!--Failover Appender 解耦对Kafka的依赖，当Kafka Crash时，日志触发Failover，写本地即可-->
+        <!--Failover appender retryIntervalSeconds的默认值是1分钟，是通过异常来切换的，所以可以适量加大间隔，比如下面的15s-->
+        <Failover name="Failover" primary="KafkaSync" retryIntervalSeconds="15" >
+            <Failovers>
+                <appender-ref ref="failoverKafkaLog"/>
+            </Failovers>
+        </Failover>
+        <Failover name="FailoverTrace" primary="KafkaTraceSync" retryIntervalSeconds="15" >
+            <Failovers>
+                <appender-ref ref="failoverKafkaLog"/>
+            </Failovers>
+        </Failover>
+    </appenders>
+    <loggers>
+        <!-- 默认显示方式 -->
+        <root level="info">
+            <appender-ref ref="Console"/>
+            <appender-ref ref="RollingFileSystem"/>
+        </root>
+        <!--根据name可以指定到具体类名或者同一包下的logger执行相关appender additivity="true"表示在root logger基础上进行发送 也就是类似于继承并添加自己的发送端的意思-->
+        <!--该例子的意思是 在com.logtest.demo.demo2testclass.Demo2Test获取logger对象时在root logger基础上包括：输出控制台,将info级别以及warn级别日志进行本地保存  新增以下操作：将error级别日志进行本地归档记录以及发送至kafka 如果kafka出现问题 重试40s后执行保存本地操作-->
+        <!--注意： 在当前类中如果在内部类中打印日志（如多线程测试时用内部类实现run方法）可能会出现获取类名为xxx$1这种类名 这种情况下不会精确匹配到当前类名而是需要将logger的name向上一级-->
+        <!--例如： 我在com.logtest.demo.Demo2Test类中的某个test中在线程内部类中进行打印日志而在下面的logger中将name设置为com.logtest.demo.Demo2Test 那么不会执行当前logger 因为他获取到的类名为com.logtest.demo.Demo2Test$1 -->
+        <!--而如果logger的name设置为com.logtest.demo则可以正常匹配到而如果没有找到相关父级name则会使用默认root节点的输出规则进行输出-->
+        <Logger name="com.sgcc.dlsc.pxsettelementinfpubgrid.service" level="info" additivity="false">
+            <!--生产环境将控制台去掉-->
+            <appender-ref ref="Console"/>
+            <appender-ref ref="Failover"/>
+            <appender-ref ref="FailoverTrace"/>
+            <appender-ref ref="RollingFileSystem"/>
+            <appender-ref ref="RollingFileBusiness"/>
+        </Logger>
+        <Logger name="org.apache.kafka" level="INFO"/> <!-- avoid recursive logging -->
+        <!-- 将业务dao接口填写进去,并用控制台输出即可 -->
+        <logger name="com.sgcc.dlsc.pxsettelementinfpubgrid.dao" level="DEBUG" additivity="false">
+            <appender-ref ref="Console"/>
+            <appender-ref ref="RollingFileSystem"/>
+        </logger>
+    </loggers>
+</configuration>
